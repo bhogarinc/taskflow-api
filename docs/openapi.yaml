@@ -1,0 +1,1506 @@
+openapi: 3.1.0
+info:
+  title: TaskFlow API
+  description: |
+    Lightweight task management REST API for teams. Supports task CRUD operations,
+    user authentication, team boards, and real-time collaboration features.
+  version: 1.0.0
+  contact:
+    name: TaskFlow Support
+    email: api@taskflow.io
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: https://api.taskflow.io/v1
+    description: Production server
+  - url: https://staging-api.taskflow.io/v1
+    description: Staging server
+  - url: http://localhost:8000/v1
+    description: Local development
+
+security:
+  - BearerAuth: []
+  - OAuth2: [read, write]
+
+tags:
+  - name: Authentication
+    description: User registration, login, and token management
+  - name: Users
+    description: User profile management
+  - name: Tasks
+    description: Task CRUD operations and management
+  - name: Boards
+    description: Team boards and project organization
+  - name: Teams
+    description: Team management and member operations
+  - name: Comments
+    description: Task comments and discussions
+
+paths:
+  # ==================== AUTHENTICATION ====================
+  /auth/register:
+    post:
+      tags: [Authentication]
+      summary: Register new user
+      description: Create a new user account with email verification
+      security: []
+      operationId: registerUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserRegistration'
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '409':
+          $ref: '#/components/responses/ConflictError'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /auth/login:
+    post:
+      tags: [Authentication]
+      summary: User login
+      description: Authenticate user and return access tokens
+      security: []
+      operationId: loginUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Refresh access token
+      description: Get new access token using refresh token
+      security: []
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+                  example: eyJhbGciOiJIUzI1NiIs...
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      summary: User logout
+      description: Invalidate current access token
+      operationId: logoutUser
+      responses:
+        '204':
+          description: Logout successful
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/forgot-password:
+    post:
+      tags: [Authentication]
+      summary: Request password reset
+      description: Send password reset email to user
+      security: []
+      operationId: forgotPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+      responses:
+        '200':
+          description: Password reset email sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Password reset instructions sent to your email
+
+  # ==================== USERS ====================
+  /users/me:
+    get:
+      tags: [Users]
+      summary: Get current user profile
+      description: Retrieve authenticated user's profile information
+      operationId: getCurrentUser
+      responses:
+        '200':
+          description: User profile retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+    patch:
+      tags: [Users]
+      summary: Update user profile
+      description: Update current user's profile information
+      operationId: updateCurrentUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdate'
+      responses:
+        '200':
+          description: Profile updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /users/me/password:
+    put:
+      tags: [Users]
+      summary: Change password
+      description: Change current user's password
+      operationId: changePassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password:
+                  type: string
+                  format: password
+                  minLength: 8
+                new_password:
+                  type: string
+                  format: password
+                  minLength: 8
+      responses:
+        '204':
+          description: Password changed successfully
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /users/{userId}:
+    get:
+      tags: [Users]
+      summary: Get user by ID
+      description: Retrieve public profile of a user
+      operationId: getUserById
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: User found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPublic'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  # ==================== TASKS ====================
+  /tasks:
+    get:
+      tags: [Tasks]
+      summary: List tasks
+      description: |
+        Retrieve paginated list of tasks. Supports filtering by status, priority,
+        assignee, board, and due date range.
+      operationId: listTasks
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/TaskStatus'
+        - name: priority
+          in: query
+          schema:
+            $ref: '#/components/schemas/TaskPriority'
+        - name: assignee_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: board_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: due_before
+          in: query
+          description: Filter tasks due before this date
+          schema:
+            type: string
+            format: date-time
+        - name: due_after
+          in: query
+          description: Filter tasks due after this date
+          schema:
+            type: string
+            format: date-time
+        - name: search
+          in: query
+          description: Search in title and description
+          schema:
+            type: string
+            minLength: 2
+        - name: page
+          in: query
+          description: Page number (1-based)
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: per_page
+          in: query
+          description: Items per page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [created_at, updated_at, due_date, priority, title]
+            default: created_at
+        - name: sort_order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        '200':
+          description: List of tasks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedTasks'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+    post:
+      tags: [Tasks]
+      summary: Create task
+      description: Create a new task
+      operationId: createTask
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskCreate'
+      responses:
+        '201':
+          description: Task created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+          headers:
+            Location:
+              description: URL of the created task
+              schema:
+                type: string
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /tasks/{taskId}:
+    get:
+      tags: [Tasks]
+      summary: Get task by ID
+      description: Retrieve detailed task information including comments
+      operationId: getTaskById
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Task details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskDetailed'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    patch:
+      tags: [Tasks]
+      summary: Update task
+      description: Update task fields
+      operationId: updateTask
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskUpdate'
+      responses:
+        '200':
+          description: Task updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    delete:
+      tags: [Tasks]
+      summary: Delete task
+      description: Soft delete a task
+      operationId: deleteTask
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Task deleted successfully
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /tasks/{taskId}/assign:
+    post:
+      tags: [Tasks]
+      summary: Assign task
+      description: Assign task to a user
+      operationId: assignTask
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [assignee_id]
+              properties:
+                assignee_id:
+                  type: string
+                  format: uuid
+                  nullable: true
+      responses:
+        '200':
+          description: Task assigned successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /tasks/{taskId}/status:
+    patch:
+      tags: [Tasks]
+      summary: Update task status
+      description: Change task status (convenience endpoint)
+      operationId: updateTaskStatus
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  $ref: '#/components/schemas/TaskStatus'
+      responses:
+        '200':
+          description: Status updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+
+  # ==================== BOARDS ====================
+  /boards:
+    get:
+      tags: [Boards]
+      summary: List boards
+      description: Retrieve boards accessible to current user
+      operationId: listBoards
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: List of boards
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedBoards'
+
+    post:
+      tags: [Boards]
+      summary: Create board
+      description: Create a new project board
+      operationId: createBoard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BoardCreate'
+      responses:
+        '201':
+          description: Board created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Board'
+
+  /boards/{boardId}:
+    get:
+      tags: [Boards]
+      summary: Get board details
+      description: Retrieve board with task statistics
+      operationId: getBoardById
+      parameters:
+        - name: boardId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Board details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BoardDetailed'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    patch:
+      tags: [Boards]
+      summary: Update board
+      description: Update board settings
+      operationId: updateBoard
+      parameters:
+        - name: boardId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BoardUpdate'
+      responses:
+        '200':
+          description: Board updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Board'
+
+    delete:
+      tags: [Boards]
+      summary: Delete board
+      description: Delete board and all associated tasks
+      operationId: deleteBoard
+      parameters:
+        - name: boardId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Board deleted
+
+  /boards/{boardId}/tasks:
+    get:
+      tags: [Boards]
+      summary: Get board tasks
+      description: Retrieve all tasks in a board
+      operationId: getBoardTasks
+      parameters:
+        - name: boardId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: group_by
+          in: query
+          description: Group tasks by status or assignee
+          schema:
+            type: string
+            enum: [status, assignee, none]
+            default: status
+      responses:
+        '200':
+          description: Board tasks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groups:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key:
+                          type: string
+                        tasks:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/Task'
+
+  # ==================== TEAMS ====================
+  /teams:
+    get:
+      tags: [Teams]
+      summary: List teams
+      description: Retrieve user's teams
+      operationId: listTeams
+      responses:
+        '200':
+          description: List of teams
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Team'
+
+    post:
+      tags: [Teams]
+      summary: Create team
+      description: Create a new team
+      operationId: createTeam
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeamCreate'
+      responses:
+        '201':
+          description: Team created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Team'
+
+  /teams/{teamId}:
+    get:
+      tags: [Teams]
+      summary: Get team details
+      operationId: getTeamById
+      parameters:
+        - name: teamId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Team details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamDetailed'
+
+  /teams/{teamId}/members:
+    get:
+      tags: [Teams]
+      summary: List team members
+      operationId: listTeamMembers
+      parameters:
+        - name: teamId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Team members
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TeamMember'
+
+    post:
+      tags: [Teams]
+      summary: Add team member
+      description: Invite user to team by email
+      operationId: addTeamMember
+      parameters:
+        - name: teamId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role]
+              properties:
+                email:
+                  type: string
+                  format: email
+                role:
+                  $ref: '#/components/schemas/TeamRole'
+      responses:
+        '201':
+          description: Member added
+
+  /teams/{teamId}/members/{userId}:
+    delete:
+      tags: [Teams]
+      summary: Remove team member
+      operationId: removeTeamMember
+      parameters:
+        - name: teamId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Member removed
+
+  # ==================== COMMENTS ====================
+  /tasks/{taskId}/comments:
+    get:
+      tags: [Comments]
+      summary: List task comments
+      operationId: listComments
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: List of comments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Comment'
+
+    post:
+      tags: [Comments]
+      summary: Add comment
+      operationId: addComment
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentCreate'
+      responses:
+        '201':
+          description: Comment added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+
+  /comments/{commentId}:
+    delete:
+      tags: [Comments]
+      summary: Delete comment
+      operationId: deleteComment
+      parameters:
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Comment deleted
+
+  # ==================== HEALTH ====================
+  /health:
+    get:
+      tags: [System]
+      summary: Health check
+      description: API health status endpoint
+      security: []
+      operationId: healthCheck
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  version:
+                    type: string
+                    example: 1.0.0
+                  timestamp:
+                    type: string
+                    format: date-time
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT access token obtained from login
+    
+    OAuth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://auth.taskflow.io/oauth/authorize
+          tokenUrl: https://auth.taskflow.io/oauth/token
+          scopes:
+            read: Read access to resources
+            write: Write access to resources
+            admin: Administrative access
+
+  schemas:
+    # -------------------- User Schemas --------------------
+    UserRegistration:
+      type: object
+      required: [email, password, full_name]
+      properties:
+        email:
+          type: string
+          format: email
+          example: john.doe@example.com
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: SecurePass123!
+        full_name:
+          type: string
+          minLength: 2
+          maxLength: 100
+          example: John Doe
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+
+    TokenResponse:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in]
+      properties:
+        access_token:
+          type: string
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        refresh_token:
+          type: string
+          example: dGhpcyBpcyBhIHJlZnJlc2ggdG9rZW4...
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+          description: Token expiration time in seconds
+          example: 3600
+
+    User:
+      type: object
+      required: [id, email, full_name, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        full_name:
+          type: string
+        avatar_url:
+          type: string
+          format: uri
+          nullable: true
+        timezone:
+          type: string
+          default: UTC
+        notification_preferences:
+          $ref: '#/components/schemas/NotificationPreferences'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    UserPublic:
+      type: object
+      required: [id, full_name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        full_name:
+          type: string
+        avatar_url:
+          type: string
+          format: uri
+          nullable: true
+
+    UserUpdate:
+      type: object
+      properties:
+        full_name:
+          type: string
+          minLength: 2
+          maxLength: 100
+        avatar_url:
+          type: string
+          format: uri
+        timezone:
+          type: string
+        notification_preferences:
+          $ref: '#/components/schemas/NotificationPreferences'
+
+    NotificationPreferences:
+      type: object
+      properties:
+        email_task_assignments:
+          type: boolean
+          default: true
+        email_due_reminders:
+          type: boolean
+          default: true
+        email_mentions:
+          type: boolean
+          default: true
+        push_notifications:
+          type: boolean
+          default: false
+
+    # -------------------- Task Schemas --------------------
+    TaskStatus:
+      type: string
+      enum: [backlog, todo, in_progress, in_review, done, cancelled]
+      example: todo
+
+    TaskPriority:
+      type: string
+      enum: [lowest, low, medium, high, highest]
+      example: medium
+
+    TaskCreate:
+      type: object
+      required: [title, board_id]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+          example: Implement user authentication
+        description:
+          type: string
+          maxLength: 10000
+          example: Add JWT-based authentication to the API
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        priority:
+          $ref: '#/components/schemas/TaskPriority'
+        board_id:
+          type: string
+          format: uuid
+        assignee_id:
+          type: string
+          format: uuid
+          nullable: true
+        due_date:
+          type: string
+          format: date
+          example: '2025-02-15'
+        labels:
+          type: array
+          items:
+            type: string
+          example: [backend, auth, sprint-1]
+        estimated_hours:
+          type: number
+          minimum: 0
+          maximum: 1000
+          example: 8
+
+    TaskUpdate:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 10000
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        priority:
+          $ref: '#/components/schemas/TaskPriority'
+        assignee_id:
+          type: string
+          format: uuid
+          nullable: true
+        due_date:
+          type: string
+          format: date
+        labels:
+          type: array
+          items:
+            type: string
+        estimated_hours:
+          type: number
+          minimum: 0
+          maximum: 1000
+
+    Task:
+      type: object
+      required: [id, title, status, priority, board_id, created_by, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        priority:
+          $ref: '#/components/schemas/TaskPriority'
+        board_id:
+          type: string
+          format: uuid
+        assignee_id:
+          type: string
+          format: uuid
+          nullable: true
+        assignee:
+          $ref: '#/components/schemas/UserPublic'
+        due_date:
+          type: string
+          format: date
+          nullable: true
+        labels:
+          type: array
+          items:
+            type: string
+        estimated_hours:
+          type: number
+          nullable: true
+        created_by:
+          type: string
+          format: uuid
+        creator:
+          $ref: '#/components/schemas/UserPublic'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    TaskDetailed:
+      allOf:
+        - $ref: '#/components/schemas/Task'
+        - type: object
+          properties:
+            comments_count:
+              type: integer
+            recent_comments:
+              type: array
+              items:
+                $ref: '#/components/schemas/Comment'
+
+    PaginatedTasks:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Task'
+        pagination:
+          $ref: '#/components/schemas/PaginationInfo'
+
+    # -------------------- Board Schemas --------------------
+    BoardCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: Q1 2025 Sprint
+        description:
+          type: string
+          maxLength: 500
+        team_id:
+          type: string
+          format: uuid
+          description: Optional team association
+        is_public:
+          type: boolean
+          default: false
+
+    BoardUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+        is_public:
+          type: boolean
+
+    Board:
+      type: object
+      required: [id, name, created_by, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        team_id:
+          type: string
+          format: uuid
+          nullable: true
+        is_public:
+          type: boolean
+        created_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    BoardDetailed:
+      allOf:
+        - $ref: '#/components/schemas/Board'
+        - type: object
+          properties:
+            task_counts:
+              type: object
+              properties:
+                total:
+                  type: integer
+                by_status:
+                  type: object
+                  additionalProperties:
+                    type: integer
+
+    PaginatedBoards:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Board'
+        pagination:
+          $ref: '#/components/schemas/PaginationInfo'
+
+    # -------------------- Team Schemas --------------------
+    TeamRole:
+      type: string
+      enum: [owner, admin, member, viewer]
+      example: member
+
+    TeamCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+
+    Team:
+      type: object
+      required: [id, name, created_by, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        created_by:
+          type: string
+          format: uuid
+        member_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    TeamDetailed:
+      allOf:
+        - $ref: '#/components/schemas/Team'
+        - type: object
+          properties:
+            boards:
+              type: array
+              items:
+                $ref: '#/components/schemas/Board'
+
+    TeamMember:
+      type: object
+      required: [user_id, role, joined_at]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        user:
+          $ref: '#/components/schemas/UserPublic'
+        role:
+          $ref: '#/components/schemas/TeamRole'
+        joined_at:
+          type: string
+          format: date-time
+
+    # -------------------- Comment Schemas --------------------
+    CommentCreate:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 5000
+          example: This looks good, but we should consider edge cases.
+
+    Comment:
+      type: object
+      required: [id, task_id, user_id, content, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        task_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        user:
+          $ref: '#/components/schemas/UserPublic'
+        content:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    # -------------------- Common Schemas --------------------
+    PaginationInfo:
+      type: object
+      required: [page, per_page, total, total_pages, has_next, has_prev]
+      properties:
+        page:
+          type: integer
+          example: 1
+        per_page:
+          type: integer
+          example: 20
+        total:
+          type: integer
+          example: 150
+        total_pages:
+          type: integer
+          example: 8
+        has_next:
+          type: boolean
+          example: true
+        has_prev:
+          type: boolean
+          example: false
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          example: VALIDATION_ERROR
+        message:
+          type: string
+          example: Invalid input data provided
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+
+  responses:
+    ValidationError:
+      description: Validation error - invalid input data
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: VALIDATION_ERROR
+            message: Request validation failed
+            details:
+              - field: email
+                message: Invalid email format
+              - field: password
+                message: Password must be at least 8 characters
+
+    UnauthorizedError:
+      description: Unauthorized - invalid or missing authentication
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: UNAUTHORIZED
+            message: Invalid or expired access token
+
+    ForbiddenError:
+      description: Forbidden - insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: FORBIDDEN
+            message: You don't have permission to access this resource
+
+    NotFoundError:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: NOT_FOUND
+            message: Requested resource does not exist
+
+    ConflictError:
+      description: Conflict - resource already exists
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: CONFLICT
+            message: User with this email already exists
+
+    RateLimitError:
+      description: Rate limit exceeded
+      headers:
+        X-RateLimit-Limit:
+          description: Request limit per window
+          schema:
+            type: integer
+        X-RateLimit-Remaining:
+          description: Remaining requests in current window
+          schema:
+            type: integer
+        X-RateLimit-Reset:
+          description: Unix timestamp when limit resets
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: RATE_LIMIT_EXCEEDED
+            message: API rate limit exceeded. Try again in 60 seconds.
+
+  headers:
+    X-Request-ID:
+      description: Unique request identifier for tracing
+      schema:
+        type: string
+        format: uuid
+    X-RateLimit-Limit:
+      description: Request limit per time window
+      schema:
+        type: integer
+    X-RateLimit-Remaining:
+      description: Remaining requests in current window
+      schema:
+        type: integer
+    X-RateLimit-Reset:
+      description: Unix timestamp when limit resets
+      schema:
+        type: integer
